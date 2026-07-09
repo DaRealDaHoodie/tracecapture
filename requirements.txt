@@ -1,0 +1,12 @@
+# Data pipeline (CPU-friendly; install on any machine)
+datasets>=3.0.0
+huggingface_hub>=0.26.0
+pyyaml>=6.0
+tqdm>=4.66.0
+orjson>=3.10.0
+pandas>=2.2.0
+pyarrow>=17.0.0
+regex>=2024.0.0
+
+# Training stack is installed separately on the GPU pod
+# via scripts/runpod_setup.sh (Unsloth pins its own torch/transformers)

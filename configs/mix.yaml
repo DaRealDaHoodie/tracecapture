@@ -1,0 +1,113 @@
+# Multi-teacher mix for private Qwen3.6-35B-A3B coding-agent SFT
+# Ratios are target token/row shares after filtering (approximate).
+
+student:
+  model_id: Qwen/Qwen3.6-35B-A3B
+  # Unsloth-optimized mirror when available:
+  unsloth_model_id: unsloth/Qwen3.6-35B-A3B
+
+output:
+  data_dir: data
+  raw_dir: data/raw
+  cleaned_dir: data/cleaned
+  mixed_path: data/mixed/train_qwen_agent.jsonl
+  holdout_path: data/mixed/holdout_qwen_agent.jsonl
+  holdout_fraction: 0.05
+
+# Target total training examples after mix (not raw HF rows).
+# Start smaller for smoke test; raise for full run.
+target_train_rows: 40000
+max_seq_chars: 48000  # rough pre-tokenize cap (~8k-12k tokens depending on content)
+
+teachers:
+  # --- Capability backbone (verified / open SWE agents) ---
+  - id: coderforge
+    hf_id: togethercomputer/CoderForge-Preview
+    share: 0.30
+    enabled: true
+    notes: Prefer pass/success trajectories when labels exist
+
+  - id: open_swe
+    hf_id: nvidia/Open-SWE-Traces
+    share: 0.15
+    enabled: true
+    notes: Prefer thinking-mode splits when present
+
+  - id: nebius_openhands
+    hf_id: nebius/SWE-rebench-openhands-trajectories
+    share: 0.10
+    enabled: true
+
+  - id: nemotron_swe
+    hf_id: nvidia/Nemotron-SFT-SWE-v2
+    share: 0.05
+    enabled: true
+
+  # --- Frontier coding-agent style ---
+  - id: fable_glint
+    hf_id: Glint-Research/Fable-5-traces
+    share: 0.15
+    enabled: true
+    config: null  # default; also has pi_agent
+    notes: High-signal Fable CoT + tools
+
+  - id: fable_crownelius
+    hf_id: Crownelius/Complete-FABLE.5-traces-2M
+    share: 0.05
+    enabled: true
+    notes: Content-verified ~50k only; parse row_json
+
+  - id: claude_code_merged
+    hf_id: nlile/misc-merged-claude-code-traces-v1
+    share: 0.05
+    enabled: true
+
+  - id: gpt55_codex
+    hf_id: AletheiaResearch/GPT-5.5-Codex
+    share: 0.08
+    enabled: true
+    notes: GPT-5.5 agent traces if available
+
+  # Grok public agent dumps are thin; enable when you add local exports
+  - id: grok_local
+    hf_id: null
+    local_glob: data/local/grok/**/*.jsonl
+    share: 0.02
+    enabled: false
+    notes: Drop your own Grok agent exports here
+
+  # --- Keep IQ / tools ---
+  - id: nemotron_agentic
+    hf_id: nvidia/Nemotron-SFT-Agentic-v2
+    share: 0.03
+    enabled: true
+    max_rows: 5000
+
+  - id: nemotron_opencode
+    hf_id: nvidia/Nemotron-SFT-OpenCode-v1
+    share: 0.02
+    enabled: true
+    max_rows: 3000
+
+system_prompt: |
+  You are a careful coding agent. Think step by step inside <think>...</think>,
+  then either call a tool or give a final answer. Prefer small, verifiable steps.
+  Use tools when you need to inspect or change the codebase. Do not invent tool
+  results — wait for real observations.
+
+train:
+  max_seq_length: 8192
+  lora_r: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  learning_rate: 8.0e-5
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  logging_steps: 10
+  save_steps: 200
+  seed: 42
+  # Set true on dual 6000s
+  multi_gpu: false

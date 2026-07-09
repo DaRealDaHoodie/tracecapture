@@ -1,0 +1,18 @@
+# Data & models (large / private)
+data/raw/
+data/cleaned/
+data/mixed/
+data/local/
+outputs/
+*.gguf
+*.safetensors
+wandb/
+.cache/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.DS_Store
+*.log
+hf_cache/
