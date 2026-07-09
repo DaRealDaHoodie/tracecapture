@@ -25,48 +25,60 @@ teachers:
     hf_id: togethercomputer/CoderForge-Preview
     share: 0.30
     enabled: true
+    # Cap raw download — mix only needs ~12k for 40k train @ 30% share
+    max_rows: 25000
     notes: Prefer pass/success trajectories when labels exist
 
   - id: open_swe
     hf_id: nvidia/Open-SWE-Traces
     share: 0.15
     enabled: true
+    max_rows: 20000
     notes: Prefer thinking-mode splits when present
 
   - id: nebius_openhands
     hf_id: nebius/SWE-rebench-openhands-trajectories
     share: 0.10
     enabled: true
+    max_rows: 15000
 
   - id: nemotron_swe
     hf_id: nvidia/Nemotron-SFT-SWE-v2
     share: 0.05
     enabled: true
+    max_rows: 10000
 
   # --- Frontier coding-agent style ---
   - id: fable_glint
     hf_id: Glint-Research/Fable-5-traces
     share: 0.15
     enabled: true
-    config: null  # default; also has pi_agent
+    # Prefer single merged JSONL (avoids 429 from thousands of pi-trace files)
+    data_files:
+      - fable5_cot_merged.jsonl
     notes: High-signal Fable CoT + tools
 
   - id: fable_crownelius
     hf_id: Crownelius/Complete-FABLE.5-traces-2M
     share: 0.05
     enabled: true
+    max_rows: 20000
     notes: Content-verified ~50k only; parse row_json
 
   - id: claude_code_merged
     hf_id: nlile/misc-merged-claude-code-traces-v1
     share: 0.05
     enabled: true
+    max_rows: 15000
 
   - id: gpt55_codex
     hf_id: AletheiaResearch/GPT-5.5-Codex
     share: 0.08
     enabled: true
-    notes: GPT-5.5 agent traces if available
+    max_rows: 20000
+    # Many rollout-*.jsonl agent-trace files (not a standard train table)
+    file_glob: "rollout-*.jsonl"
+    notes: GPT-5.5 Codex agent rollouts
 
   # Grok public agent dumps are thin; enable when you add local exports
   - id: grok_local
@@ -82,23 +94,19 @@ teachers:
     share: 0.03
     enabled: true
     max_rows: 5000
-    # Leave splits null to auto-discover (this set often has non-train split names)
-    splits: null
-    notes: Tool-use trajectories; downloader discovers real splits
+    # Only the streaming-friendly tool-calling split (others are huge map builds)
+    splits:
+      - tool_calling
+    notes: Tool-use trajectories
 
   - id: nemotron_opencode
     hf_id: nvidia/Nemotron-SFT-OpenCode-v1
     share: 0.02
     enabled: true
     max_rows: 3000
-    # This dataset has NO "train" split — named subsets instead:
+    # Prefer one solid OpenCode subset to avoid multi-hour downloads
     splits:
       - bash_only_tool
-      - bash_only_tool_skills
-      - general
-      - agent_skills
-      - question_tool
-      - agent_skills_question_tool
     notes: OpenCode-style CLI agent traces (Qwen3-Coder teacher)
 
 system_prompt: |
@@ -108,10 +116,12 @@ system_prompt: |
   results — wait for real observations.
 
 train:
-  max_seq_length: 8192
-  lora_r: 32
-  lora_alpha: 64
-  lora_dropout: 0.05
+  load_in_4bit: false
+  max_seq_length: 4096
+  lora_on_experts: false  # attention-only LoRA saves VRAM on MoE
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.0  # must be 0 for Qwen MoE + PEFT ParamWrapper
   learning_rate: 8.0e-5
   num_train_epochs: 1
   per_device_train_batch_size: 1

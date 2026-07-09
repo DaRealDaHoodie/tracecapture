@@ -127,17 +127,108 @@ def try_load_map(hf_id: str, config: str | None, split: str):
     return load_dataset(**kwargs)
 
 
+def download_data_files(hf_id: str, data_files: list[str], out_path: Path, max_rows: int | None) -> Path:
+    """Download explicit repo files (e.g. a single merged JSONL) — avoids multi-file 429s."""
+    from huggingface_hub import hf_hub_download
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"[download files] {hf_id} {data_files} -> {out_path}")
+    total = 0
+    with out_path.open("w", encoding="utf-8") as out_f:
+        for rel in data_files:
+            local = hf_hub_download(
+                repo_id=hf_id,
+                repo_type="dataset",
+                filename=rel,
+            )
+            print(f"  got {rel} -> {local}")
+            with open(local, encoding="utf-8") as src:
+                for line in src:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    out_f.write(line + "\n")
+                    total += 1
+                    if max_rows is not None and total >= max_rows:
+                        print(f"  wrote {total} rows (capped)")
+                        return out_path
+    print(f"  wrote {total} rows -> {out_path}")
+    return out_path
+
+
+def download_repo_jsonl_glob(
+    hf_id: str,
+    out_path: Path,
+    max_rows: int | None,
+    pattern: str = "rollout-*.jsonl",
+) -> Path:
+    """Merge many agent-trace JSONL files from a HF dataset repo (e.g. GPT-5.5 Codex)."""
+    import fnmatch
+
+    from huggingface_hub import hf_hub_download, list_repo_files
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    files = list_repo_files(hf_id, repo_type="dataset")
+    matched = [f for f in files if fnmatch.fnmatch(f.split("/")[-1], pattern) or fnmatch.fnmatch(f, pattern)]
+    matched = [f for f in matched if f.endswith(".jsonl")]
+    print(f"[download glob] {hf_id} pattern={pattern!r} matched={len(matched)} -> {out_path}")
+    if not matched:
+        raise RuntimeError(f"No files matched {pattern!r} in {hf_id}")
+
+    total = 0
+    with out_path.open("w", encoding="utf-8") as out_f:
+        for rel in matched:
+            if max_rows is not None and total >= max_rows:
+                break
+            try:
+                local = hf_hub_download(repo_id=hf_id, repo_type="dataset", filename=rel)
+            except Exception as e:
+                print(f"  skip {rel}: {e}")
+                continue
+            with open(local, encoding="utf-8") as src:
+                for line in src:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # tag source file for converters
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(obj, dict):
+                        obj.setdefault("_source_file", rel)
+                        out_f.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
+                    else:
+                        out_f.write(line + "\n")
+                    total += 1
+                    if max_rows is not None and total >= max_rows:
+                        break
+    print(f"  wrote {total} event rows from {len(matched)} files -> {out_path}")
+    if total == 0:
+        if out_path.exists():
+            out_path.unlink()
+        raise RuntimeError(f"No rows from glob download of {hf_id}")
+    return out_path
+
+
 def download_hf(
     hf_id: str,
     out_dir: Path,
     max_rows: int | None,
     config: str | None,
     splits: list[str] | None,
+    data_files: list[str] | None = None,
+    file_glob: str | None = None,
 ) -> Path:
     out_path = out_dir / (hf_id.replace("/", "__") + ".jsonl")
     if out_path.exists() and out_path.stat().st_size > 1000:
         print(f"[skip] already have {out_path}")
         return out_path
+
+    if data_files:
+        return download_data_files(hf_id, data_files, out_path, max_rows)
+    if file_glob:
+        return download_repo_jsonl_glob(hf_id, out_path, max_rows, pattern=file_glob)
 
     print(f"[download] {hf_id} -> {out_path}")
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -258,9 +349,21 @@ def main() -> None:
         splits = t.get("splits")
         if isinstance(splits, str):
             splits = [splits]
+        data_files = t.get("data_files")
+        if isinstance(data_files, str):
+            data_files = [data_files]
+        file_glob = t.get("file_glob")
 
         try:
-            download_hf(t["hf_id"], raw_dir, limit, t.get("config"), splits)
+            download_hf(
+                t["hf_id"],
+                raw_dir,
+                limit,
+                t.get("config"),
+                splits,
+                data_files=data_files,
+                file_glob=file_glob,
+            )
         except Exception as e:
             msg = f"{tid} ({t['hf_id']}): {e}"
             print(f"[ERROR] {msg}")
