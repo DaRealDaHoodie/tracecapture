@@ -162,6 +162,8 @@ To turn a broken HF source off: `enabled: false` on that teacher.
 |---------|-----|
 | Dataset download 401/403 | `export HF_TOKEN=...` and re-run `01` |
 | One dataset errors | Script continues; set that teacher `enabled: false` |
+| `Bad split: train` | Dataset uses named splits (e.g. Nemotron OpenCode). Pull latest `01_download_datasets.py` — it auto-discovers splits. Or set `splits:` in `mix.yaml`. |
+| Nemotron download fails | Re-run only those teachers: `python scripts/01_download_datasets.py --force --only nemotron_opencode nemotron_agentic` |
 | CUDA OOM | In `configs/mix.yaml` train section: lower `max_seq_length` to `4096`, raise `gradient_accumulation_steps` |
 | Unsloth install fails | Use a fresh PyTorch CUDA pod image; re-run `runpod_setup.sh` |
 | Empty mix | Run `01` successfully first; check `data/raw/*.jsonl` sizes |

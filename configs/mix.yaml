@@ -82,12 +82,24 @@ teachers:
     share: 0.03
     enabled: true
     max_rows: 5000
+    # Leave splits null to auto-discover (this set often has non-train split names)
+    splits: null
+    notes: Tool-use trajectories; downloader discovers real splits
 
   - id: nemotron_opencode
     hf_id: nvidia/Nemotron-SFT-OpenCode-v1
     share: 0.02
     enabled: true
     max_rows: 3000
+    # This dataset has NO "train" split — named subsets instead:
+    splits:
+      - bash_only_tool
+      - bash_only_tool_skills
+      - general
+      - agent_skills
+      - question_tool
+      - agent_skills_question_tool
+    notes: OpenCode-style CLI agent traces (Qwen3-Coder teacher)
 
 system_prompt: |
   You are a careful coding agent. Think step by step inside <think>...</think>,
