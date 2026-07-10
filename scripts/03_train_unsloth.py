@@ -88,6 +88,11 @@ def main() -> None:
         default=None,
         help="Override max sequence length (default from config, recommend 4096 on 96GB)",
     )
+    ap.add_argument(
+        "--resume",
+        default=None,
+        help="Path to a checkpoint dir (e.g. outputs/qwen36-agent-lora/checkpoint-800)",
+    )
     args = ap.parse_args()
 
     mix = load_mix(Path(args.config))
@@ -227,8 +232,15 @@ def main() -> None:
         ),
     )
 
+    resume_path = args.resume
+    if resume_path:
+        resume_path = str(Path(resume_path).resolve())
+        if not Path(resume_path).is_dir():
+            raise SystemExit(f"Resume checkpoint not found: {resume_path}")
+        print(f"Resuming from {resume_path}")
+
     print("Starting training…")
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_path if resume_path else None)
     print("Saving adapter…")
     model.save_pretrained(str(out_dir / "lora_adapter"))
     tokenizer.save_pretrained(str(out_dir / "lora_adapter"))
