@@ -28,8 +28,9 @@ LORA_NAME="${LORA_NAME:-agent}"
 PORT="${PORT:-8000}"
 HOST="${HOST:-0.0.0.0}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
 MAX_LORA_RANK="${MAX_LORA_RANK:-16}"
-GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
+GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.92}"
 DTYPE="${DTYPE:-bfloat16}"
 
 # Optional: use merged weights instead of dynamic LoRA
@@ -42,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --port) PORT="$2"; shift 2 ;;
     --host) HOST="$2"; shift 2 ;;
     --max-model-len) MAX_MODEL_LEN="$2"; shift 2 ;;
+    --max-num-seqs) MAX_NUM_SEQS="$2"; shift 2 ;;
     --base) BASE_MODEL="$2"; shift 2 ;;
     --adapter) ADAPTER="$2"; shift 2 ;;
     --lora-name) LORA_NAME="$2"; shift 2 ;;
@@ -62,16 +64,35 @@ elif [[ -f "$ROOT/.secrets/hf_token" ]]; then
   export HUGGING_FACE_HUB_TOKEN="$HF_TOKEN"
 fi
 
+# Prefer workspace venv (common on RunPod)
+if [[ -x /workspace/venv/bin/vllm ]]; then
+  export PATH="/workspace/venv/bin:$PATH"
+elif [[ -x "$ROOT/../venv/bin/vllm" ]]; then
+  export PATH="$(cd "$ROOT/.." && pwd)/venv/bin:$PATH"
+fi
+
 if ! command -v vllm >/dev/null 2>&1; then
   echo "vllm not found on PATH. Activate your env and: pip install -U vllm" >&2
   exit 1
+fi
+echo "  vllm:          $(command -v vllm)"
+
+# RTX PRO 6000 Blackwell (sm120): FlashInfer's arch check fails with
+# "FlashInfer requires GPUs with sm75 or higher" during sampler profile_run.
+# Disable FlashInfer sampler (and optional FP8 GEMM path) unless overridden.
+export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
+export VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER="${VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER:-0}"
+if [[ -d /workspace/hf_cache ]]; then
+  export HF_HOME="${HF_HOME:-/workspace/hf_cache}"
 fi
 
 echo "=== vLLM serve ==="
 echo "  host/port:     ${HOST}:${PORT}"
 echo "  max_model_len: ${MAX_MODEL_LEN}"
+echo "  max_num_seqs:  ${MAX_NUM_SEQS}"
 echo "  dtype:         ${DTYPE}"
 echo "  gpu_mem_util:  ${GPU_MEM_UTIL}"
+echo "  flashinfer_sampler: VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER}"
 
 if [[ -n "$MERGE_PATH" ]]; then
   if [[ ! -d "$MERGE_PATH" ]]; then
@@ -85,6 +106,7 @@ if [[ -n "$MERGE_PATH" ]]; then
     --port "$PORT" \
     --dtype "$DTYPE" \
     --max-model-len "$MAX_MODEL_LEN" \
+    --max-num-seqs "$MAX_NUM_SEQS" \
     --gpu-memory-utilization "$GPU_MEM_UTIL" \
     --trust-remote-code \
     "${extra_args[@]}"
@@ -116,11 +138,14 @@ echo ""
 # Attention-only PEFT LoRA from Unsloth — standard enable-lora path.
 # If load fails on MoE weight layout, try MERGE_PATH=... or add:
 #   --enable-mixed-moe-lora-format
+# Qwen3.6 hybrid (Mamba + attention): default max_num_seqs=1024 can exceed
+# available Mamba cache blocks — keep max_num_seqs modest for single-user agents.
 exec vllm serve "$BASE_MODEL" \
   --host "$HOST" \
   --port "$PORT" \
   --dtype "$DTYPE" \
   --max-model-len "$MAX_MODEL_LEN" \
+  --max-num-seqs "$MAX_NUM_SEQS" \
   --gpu-memory-utilization "$GPU_MEM_UTIL" \
   --trust-remote-code \
   --enable-lora \

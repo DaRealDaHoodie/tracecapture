@@ -18,51 +18,47 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
-def build_text_inputs(tokenizer, messages: list[dict], device):
-    """Tokenize chat for text-only generation (no vision path)."""
-    # Prefer chat-template tokenize API when available
-    try:
-        encoded = tokenizer.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_tensors="pt",
-            return_dict=True,
-        )
-        if hasattr(encoded, "to"):
-            encoded = encoded.to(device)
-        elif isinstance(encoded, dict):
-            encoded = {
-                k: v.to(device) if hasattr(v, "to") else v
-                for k, v in encoded.items()
-            }
-        # Keep only text tensors so VL processors never see a fake image
-        out = {}
-        for k in ("input_ids", "attention_mask"):
-            if isinstance(encoded, dict) and k in encoded:
-                out[k] = encoded[k]
-            elif hasattr(encoded, k):
-                out[k] = getattr(encoded, k)
-        if "input_ids" in out:
-            return out
-    except Exception as e:
-        print(f"apply_chat_template(tokenize=True) failed ({e}); falling back")
-
-    prompt = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
+def get_text_tokenizer(tokenizer_or_processor):
+    """Unsloth may return a Qwen3VLProcessor — use its .tokenizer for encode()."""
+    tok = tokenizer_or_processor
+    if hasattr(tok, "encode") and callable(tok.encode):
+        return tok
+    if hasattr(tok, "tokenizer") and hasattr(tok.tokenizer, "encode"):
+        return tok.tokenizer
+    if hasattr(tok, "text_tokenizer") and hasattr(tok.text_tokenizer, "encode"):
+        return tok.text_tokenizer
+    raise AttributeError(
+        f"No encode() on {type(tok)}; tried .tokenizer / .text_tokenizer"
     )
-    # Explicit text= avoids some processor __call__ paths treating the
-    # prompt string as an image URL / base64 blob.
-    try:
-        encoded = tokenizer(text=prompt, return_tensors="pt")
-    except TypeError:
-        encoded = tokenizer(prompt, return_tensors="pt")
+
+
+def build_text_inputs(tokenizer, messages: list[dict], device):
+    """Render chat template as text, then encode — avoids Unsloth VL processor bugs."""
+    import torch
+
+    if hasattr(tokenizer, "apply_chat_template"):
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    else:
+        text_tok = get_text_tokenizer(tokenizer)
+        prompt = text_tok.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    if not isinstance(prompt, str):
+        prompt = str(prompt)
+
+    text_tok = get_text_tokenizer(tokenizer)
+    ids = text_tok.encode(prompt, add_special_tokens=False, return_tensors="pt")
+    if ids.dim() == 1:
+        ids = ids.unsqueeze(0)
     return {
-        k: v.to(device)
-        for k, v in encoded.items()
-        if k in ("input_ids", "attention_mask") and hasattr(v, "to")
+        "input_ids": ids.to(device),
+        "attention_mask": torch.ones_like(ids).to(device),
     }
 
 
